@@ -1,0 +1,83 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vault-csi-app
+  namespace: default
+spec:
+  project: default
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+  sources:
+    - repoURL: 'https://helm.releases.hashicorp.com'
+      targetRevision: 0.28.1
+      chart: vault
+      helm:
+        releaseName: vault-csi
+        values: |
+          global:
+            enabled: true
+            tlsDisable: true
+          injector:
+            enabled: false
+          csi:
+            enabled: true
+          server:
+            image:
+              repository: "hashicorp/vault"
+              tag: "latest"
+            standalone:
+              enabled: false
+            affinity: ""
+            dataStorage:
+              storageClass: default-storage
+            ha:
+              enabled: true
+              replicas: 3
+              raft:
+                enabled: true
+                setNodeId: true
+                config: |
+                  cluster_name = "vault-integrated-storage"
+                  ui = true
+                  listener "tcp" {
+                    tls_disable = "true"
+                    address = "[::]:8200"
+                    cluster_address = "[::]:8201"
+                  }
+                  storage "raft" {
+                    path = "/vault/data"
+                    retry_join {
+                      leader_api_addr = "http://vault-csi-0.vault-csi-internal:8200"
+                    }
+                    retry_join {
+                      leader_api_addr = "http://vault-csi-1.vault-csi-internal:8200"
+                    }
+                    retry_join {
+                      leader_api_addr = "http://vault-csi-2.vault-csi-internal:8200"
+                    }
+                  }
+                  disable_mlock = true
+                  service_registration "kubernetes" {}
+          # Vault UI
+          ui:
+            enabled: true
+            serviceType: "LoadBalancer"
+            serviceNodePort: null
+            externalPort: 80
+
+    - repoURL: 'https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts'
+      chart: secrets-store-csi-driver
+      targetRevision: 1.4.4
+      helm:
+        values: |
+          syncSecret:
+            enabled: true
+          enableSecretRotation: true
+          rotationPollInterval: 2m
+    - repoURL: 'https://github.com/k4shE/csi.git'
+      path: folder/dev
+      targetRevision: HEAD
